@@ -322,6 +322,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_HEAD(self) -> None:
+        self.prepare_session()
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path in {"/", ""}:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.security_headers()
+            self.end_headers()
+            return
+        if parsed.path == "/api/status":
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.security_headers()
+            self.end_headers()
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
+
     def do_POST(self) -> None:
         self.prepare_session()
         try:
@@ -359,7 +376,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def end_headers(self) -> None:
-        if self.pending_cookie:
+        if getattr(self, "pending_cookie", None):
             self.send_header(
                 "Set-Cookie",
                 f"{SESSION_COOKIE}={self.pending_cookie}; HttpOnly; SameSite=Lax; Path=/",
