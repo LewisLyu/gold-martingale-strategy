@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import os
+import ssl
 import sys
 import time
 import urllib.error
@@ -26,6 +27,15 @@ from typing import Any
 
 LIVE_BASE_URL = "https://fapi.binance.com"
 TESTNET_BASE_URL = "https://testnet.binancefuture.com"
+
+
+def https_context() -> ssl.SSLContext | None:
+    cafile = os.getenv("SSL_CERT_FILE")
+    if cafile and os.path.exists(cafile):
+        return ssl.create_default_context(cafile=cafile)
+    if os.path.exists("/etc/ssl/cert.pem"):
+        return ssl.create_default_context(cafile="/etc/ssl/cert.pem")
+    return None
 
 
 @dataclass
@@ -161,7 +171,7 @@ class BinanceFuturesClient:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         req = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=15, context=https_context()) as resp:
                 payload = resp.read().decode()
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")

@@ -75,6 +75,17 @@ AUTH_TOKENS: dict[str, float] = {}
 AUTH_TTL_SECONDS = 60 * 60 * 12
 
 
+def default_exchange() -> str:
+    configured = os.getenv("EXCHANGE", "").strip().lower()
+    if configured:
+        return configured
+    if os.getenv("OKX_API_KEY") and os.getenv("OKX_API_SECRET"):
+        return "okx"
+    if os.getenv("BINANCE_API_KEY") and os.getenv("BINANCE_API_SECRET"):
+        return "binance"
+    return "binance"
+
+
 @dataclass
 class RiskConfig:
     max_daily_loss: Decimal = Decimal("50")
@@ -126,7 +137,7 @@ class StrategyRunner:
         self.stop_event = threading.Event()
         self.client: Any = None
         self.cfg = Config()
-        self.exchange = "binance"
+        self.exchange = default_exchange()
         self.step_size = Decimal("0.001")
         self.interval = 15
         self.running = False

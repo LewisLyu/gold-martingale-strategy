@@ -131,7 +131,25 @@ BINANCE_API_SECRET=你的secret
 当前交易所接入状态：
 
 - Binance：已接入 USD-M Futures 行情、杠杆和市价单。
-- OKX、Bybit、Bitget、Gate.io、自定义交易所：网站已支持绑定字段和策略参数，但真实行情/下单需要补对应交易所适配器。
+- OKX：已接入 OKX v5 的行情、杠杆和市价单。`XAU-USDT-SWAP` 会把策略里的 XAU 数量换算成 OKX 合约张数。
+- Bybit、Bitget、Gate.io、自定义交易所：网站已支持绑定字段和策略参数，但真实行情/下单需要补对应交易所适配器。
+
+OKX 个人实盘建议在 `.env` 里使用：
+
+```text
+EXCHANGE=okx
+SYMBOL=XAU-USDT-SWAP
+OKX_API_KEY=...
+OKX_API_SECRET=...
+OKX_PASSPHRASE=...
+OKX_MARGIN_MODE=cross
+```
+
+如果 OKX 账户是双向持仓模式，可能还需要：
+
+```text
+OKX_POS_SIDE=long
+```
 
 ## 安全说明
 
