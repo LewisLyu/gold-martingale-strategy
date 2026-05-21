@@ -76,6 +76,11 @@ function renderStatus(data) {
     return;
   }
   document.body.classList.remove("app-locked");
+  document.body.classList.toggle("read-only", Boolean(data.readOnly));
+  if (data.readOnly) {
+    document.body.classList.remove("locked");
+    document.body.classList.add("bound");
+  }
   const running = data.running;
   if (Array.isArray(data.exchanges) && data.exchanges.length) {
     exchanges = data.exchanges;

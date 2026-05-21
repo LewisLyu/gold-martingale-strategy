@@ -11,12 +11,20 @@
       <section class="topbar">
         <div>
           <h1>黄金保守马丁格尔策略</h1>
-          <p>安全控制台 · API 内存授权 · 风控阈值 · 交易审计</p>
+          <p>本地交易控制 · 公网只读状态 · API Key 只存本机</p>
         </div>
         <div class="top-actions requires-bound">
           <button class="small-button" type="button" id="changeAuthBtn">更换授权</button>
           <div class="status-pill" id="runState">未运行</div>
         </div>
+      </section>
+
+      <section class="panel public-notice">
+        <div class="section-title">
+          <h2>只读状态页</h2>
+          <span>公网模式</span>
+        </div>
+        <p class="note">这里仅展示策略运行状态，不接收 API Key，也不能启动、停止或平仓。真实交易控制只允许在本机 127.0.0.1 执行。</p>
       </section>
 
       <section class="login-gate" id="loginGate">
@@ -64,7 +72,7 @@
           </label>
           <button class="primary" type="button" id="bindBtn">绑定账户</button>
           <div class="exchange-note" id="exchangeNote"></div>
-          <p class="note">网页绑定只保存在后端内存，不写入文件；服务重启后需要重新绑定。更安全的个人方式是使用服务器环境变量。</p>
+          <p class="note">个人实盘推荐把 API Key 放本机 .env 或系统环境变量；网页绑定仍只保存在后端内存，不写入文件。</p>
           <div class="error" id="authError"></div>
         </div>
       </section>
@@ -213,7 +221,7 @@
             <button class="danger" type="button" id="emergencyBtn">紧急平仓</button>
             <button type="button" id="resetBtn">重置状态</button>
           </div>
-          <p class="note">API 密钥仅提交到当前网站后端内存。实盘启动需要输入策略名称确认。</p>
+          <p class="note">个人使用推荐 API Key 存在本机 .env 或系统环境变量。实盘启动需要输入策略名称确认。</p>
         </form>
 
         <section class="panel">

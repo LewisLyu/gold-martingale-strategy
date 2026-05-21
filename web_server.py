@@ -51,8 +51,26 @@ STATE_DIR = ROOT / "runtime_state"
 AUDIT_DIR = ROOT / "runtime_audit"
 SESSION_COOKIE = "gold_strategy_session"
 AUTH_COOKIE = "gold_app_auth"
+
+
+def load_dotenv(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+load_dotenv(ROOT / ".env")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "")
 AUTH_SECRET = os.getenv("APP_SECRET", secrets.token_urlsafe(32))
+OWNER_SESSION_ID = os.getenv("OWNER_SESSION_ID", "owner")
 AUTH_TOKENS: dict[str, float] = {}
 AUTH_TTL_SECONDS = 60 * 60 * 12
 
@@ -477,6 +495,39 @@ class StrategyRunner:
                 "audit": self.audit_recent(),
             }
 
+    def public_status(self) -> dict[str, Any]:
+        status = self.status()
+        return {
+            "strategyName": status["strategyName"],
+            "readOnly": True,
+            "running": status["running"],
+            "live": status["live"],
+            "testnet": status["testnet"],
+            "exchange": status["exchange"],
+            "lastError": status["lastError"],
+            "lastActions": status["lastActions"],
+            "config": {"symbol": status["config"]["symbol"]},
+            "state": {
+                "status": status["state"]["status"],
+                "cycle_id": status["state"]["cycle_id"],
+                "add_count": status["state"]["add_count"],
+                "last_action": status["state"]["last_action"],
+            },
+            "phase": status["phase"],
+            "nextAction": status["nextAction"],
+            "riskBreach": status["riskBreach"],
+            "lastPrice": status["lastPrice"],
+            "invested": status["invested"],
+            "value": status["value"],
+            "floatingPnl": status["floatingPnl"],
+            "margin": status["margin"],
+            "pressure": status["pressure"],
+            "addBreakeven": status["addBreakeven"],
+            "coreTakeProfit": status["coreTakeProfit"],
+            "stopPrice": status["stopPrice"],
+            "nextAddPrice": status["nextAddPrice"],
+        }
+
 RUNNERS: dict[str, StrategyRunner] = {}
 
 
@@ -508,12 +559,7 @@ class Handler(BaseHTTPRequestHandler):
         return ""
 
     def session_id(self) -> str:
-        existing = self.cookie_value(SESSION_COOKIE)
-        if existing:
-            return existing
-        session_id = secrets.token_urlsafe(24)
-        self.pending_cookie = session_id
-        return session_id
+        return OWNER_SESSION_ID
 
     def is_authenticated(self) -> bool:
         if not self.password_required():
@@ -542,6 +588,9 @@ class Handler(BaseHTTPRequestHandler):
         self.prepare_session()
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/api/status":
+            if not self.is_local_request():
+                self.json(self.runner.public_status())
+                return
             if not self.is_authenticated():
                 self.json(self.public_status(), HTTPStatus.UNAUTHORIZED)
             else:
@@ -595,6 +644,9 @@ class Handler(BaseHTTPRequestHandler):
         self.prepare_session()
         try:
             payload = self.read_json()
+            if not self.is_local_request():
+                self.json({"ok": False, "error": "公网只读模式，交易控制只允许在本机执行。"}, HTTPStatus.FORBIDDEN)
+                return
             if self.path == "/api/login":
                 if self.password_required() and not APP_PASSWORD:
                     raise ValueError("公网访问必须先在服务器环境变量设置 APP_PASSWORD。")
