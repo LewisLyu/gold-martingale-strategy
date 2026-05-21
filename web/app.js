@@ -17,6 +17,7 @@ function readForm() {
   payload.live = form.get("live") === "on";
   payload.testnet = form.get("testnet") === "on";
   payload.autoReopen = form.get("autoReopen") === "on";
+  payload.closeOnBreach = form.get("closeOnBreach") === "on";
   return payload;
 }
 
@@ -31,6 +32,10 @@ async function api(path, payload) {
     throw new Error(data.error || "请求失败");
   }
   return data;
+}
+
+async function login(password) {
+  return api("/api/login", { password });
 }
 
 function setText(id, value, suffix = "") {
@@ -66,6 +71,11 @@ function renderLadder(rows) {
 }
 
 function renderStatus(data) {
+  if (data.locked) {
+    document.body.classList.add("app-locked");
+    return;
+  }
+  document.body.classList.remove("app-locked");
   const running = data.running;
   if (Array.isArray(data.exchanges) && data.exchanges.length) {
     exchanges = data.exchanges;
@@ -78,17 +88,47 @@ function renderStatus(data) {
   const exchange = exchanges.find((item) => item.id === (data.exchange || selectedExchange));
   $("#boundExchange").textContent = exchange ? exchange.name : data.exchange || "-";
   $("#adapterStatus").textContent = exchange ? exchange.note : "-";
+  $("#credentialSource").textContent =
+    data.credentialSource === "environment" ? "服务器环境变量" : data.credentialSource === "memory" ? "后端内存" : "-";
   setText("#lastPrice", data.lastPrice);
   setText("#invested", data.invested, "U");
   setText("#floatingPnl", data.floatingPnl, "U");
   setText("#pressure", data.pressure, "U");
+  setText("#phase", data.phase);
+  setText("#nextAction", data.nextAction);
+  setText("#nextAddPrice", data.nextAddPrice);
   setText("#addBreakeven", data.addBreakeven);
   setText("#coreTakeProfit", data.coreTakeProfit);
   setText("#stopPrice", data.stopPrice);
+  $("#riskBreach").textContent = data.riskBreach || "正常";
+  $("#riskBreach").classList.toggle("danger-text", Boolean(data.riskBreach));
   $("#cycleLabel").textContent = `cycle ${data.state.cycle_id || 0}`;
   $("#lastAction").textContent = (data.lastActions || []).join(" / ") || data.state.last_action || "-";
   $("#errorBox").textContent = data.lastError || "";
   renderLadder(data.ladder || []);
+  renderAudit(data.audit || []);
+  if (data.authBound) {
+    isBound = true;
+    document.body.classList.remove("locked");
+    document.body.classList.add("bound");
+  }
+}
+
+function renderAudit(items) {
+  const list = $("#auditList");
+  if (!list) return;
+  list.innerHTML = "";
+  if (!items.length) {
+    list.innerHTML = `<div class="audit-empty">暂无审计记录</div>`;
+    return;
+  }
+  items.slice().reverse().forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "audit-row";
+    const time = new Date((item.ts || 0) * 1000).toLocaleString();
+    row.innerHTML = `<strong>${item.event}</strong><span>${time}</span><small>${item.symbol || "-"}</small>`;
+    list.appendChild(row);
+  });
 }
 
 function renderExchangeSelect() {
@@ -118,8 +158,24 @@ function updateExchangeUi() {
 
 async function refresh() {
   const response = await fetch("/api/status");
-  renderStatus(await response.json());
+  const data = await response.json();
+  if (response.status === 401 || data.locked) {
+    document.body.classList.add("app-locked");
+    return;
+  }
+  renderStatus(data);
 }
+
+$("#loginBtn").addEventListener("click", async () => {
+  try {
+    $("#loginError").textContent = "";
+    await login($("#appPassword").value);
+    $("#appPassword").value = "";
+    await refresh();
+  } catch (error) {
+    $("#loginError").textContent = error.message;
+  }
+});
 
 $("#startBtn").addEventListener("click", async () => {
   try {
@@ -181,6 +237,17 @@ $("#exchangeSelect").addEventListener("change", (event) => {
 $("#stopBtn").addEventListener("click", async () => {
   try {
     await api("/api/stop");
+    await refresh();
+  } catch (error) {
+    $("#errorBox").textContent = error.message;
+  }
+});
+
+$("#emergencyBtn").addEventListener("click", async () => {
+  try {
+    const ok = window.confirm("确认紧急平仓并停止策略？这个动作会提交 reduce-only 平仓单。");
+    if (!ok) return;
+    await api("/api/emergency-close");
     await refresh();
   } catch (error) {
     $("#errorBox").textContent = error.message;

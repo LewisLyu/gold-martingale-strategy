@@ -1,4 +1,6 @@
 .env
 xau_bot_state.json
+runtime_state/
+runtime_audit/
 *.pyc
 __pycache__/

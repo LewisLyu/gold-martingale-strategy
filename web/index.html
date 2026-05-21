@@ -6,12 +6,12 @@
     <title>黄金保守马丁格尔策略</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
-  <body class="locked">
+  <body class="locked app-locked">
     <main class="shell">
       <section class="topbar">
         <div>
           <h1>黄金保守马丁格尔策略</h1>
-          <p>XAUUSDT · 首仓防守网格 · 保本减仓 · 1% 核心止盈重开</p>
+          <p>安全控制台 · API 内存授权 · 风控阈值 · 交易审计</p>
         </div>
         <div class="top-actions requires-bound">
           <button class="small-button" type="button" id="changeAuthBtn">更换授权</button>
@@ -19,11 +19,32 @@
         </div>
       </section>
 
-      <section class="auth-gate" id="authGate">
+      <section class="login-gate" id="loginGate">
+        <div class="auth-card">
+          <div class="section-title">
+            <h2>控制台登录</h2>
+            <span>本地访问保护</span>
+          </div>
+          <label>
+            管理密码
+            <input id="appPassword" type="password" autocomplete="current-password" placeholder="输入 APP_PASSWORD" />
+          </label>
+          <button class="primary" type="button" id="loginBtn">进入控制台</button>
+          <p class="note">建议在服务器环境变量设置 APP_PASSWORD。没有设置时，系统会提示当前处于无登录保护模式。</p>
+          <div class="error" id="loginError"></div>
+        </div>
+      </section>
+
+      <section class="auth-gate app-requires-login" id="authGate">
         <div class="auth-card">
           <div class="section-title">
             <h2>连接交易所账户</h2>
-            <span>服务器内存授权</span>
+            <span>Secret 不落盘</span>
+          </div>
+          <div class="safety-list">
+            <div><strong>必须关闭提现权限</strong><span>只允许读取和必要交易权限。</span></div>
+            <div><strong>必须设置 IP 白名单</strong><span>只允许你的服务器 IP 调用 API。</span></div>
+            <div><strong>推荐环境变量授权</strong><span>个人使用优先把 Key 放服务器环境变量。</span></div>
           </div>
           <label>
             交易所
@@ -43,7 +64,7 @@
           </label>
           <button class="primary" type="button" id="bindBtn">绑定账户</button>
           <div class="exchange-note" id="exchangeNote"></div>
-          <p class="note">密钥只发送到当前网站后端内存，不写入文件；绑定成功后会清空输入框并显示策略参数。</p>
+          <p class="note">网页绑定只保存在后端内存，不写入文件；服务重启后需要重新绑定。更安全的个人方式是使用服务器环境变量。</p>
           <div class="error" id="authError"></div>
         </div>
       </section>
@@ -65,6 +86,10 @@
           <span>保证金压力</span>
           <strong id="pressure">0.00U</strong>
         </div>
+        <div>
+          <span>阶段</span>
+          <strong id="phase">-</strong>
+        </div>
       </section>
 
       <section class="workspace requires-bound">
@@ -77,6 +102,8 @@
             <span>当前交易所</span>
             <strong id="boundExchange">-</strong>
             <small id="adapterStatus">-</small>
+            <span>授权来源</span>
+            <strong id="credentialSource">-</strong>
           </div>
 
           <div class="grid2">
@@ -148,6 +175,33 @@
             </label>
           </div>
 
+          <div class="section-title compact">
+            <h2>风控限制</h2>
+            <span>触发后自动停止</span>
+          </div>
+          <div class="grid2">
+            <label>
+              单日最大亏损 U
+              <input name="maxDailyLoss" type="number" step="0.01" value="50" />
+            </label>
+            <label>
+              单轮最大浮亏 U
+              <input name="maxCycleLoss" type="number" step="0.01" value="214" />
+            </label>
+            <label>
+              最大累计头寸 U
+              <input name="maxPositionNotional" type="number" step="0.01" value="12000" />
+            </label>
+            <label>
+              最大保证金压力 U
+              <input name="maxMarginPressure" type="number" step="0.01" value="300" />
+            </label>
+          </div>
+          <label class="check risk-check">
+            <input name="closeOnBreach" type="checkbox" checked />
+            触发风控时立即平仓
+          </label>
+
           <label>
             实盘确认
             <input name="confirmText" placeholder="输入：黄金保守马丁格尔策略" />
@@ -156,6 +210,7 @@
           <div class="actions">
             <button class="primary" type="button" id="startBtn">启动策略</button>
             <button type="button" id="stopBtn">停止</button>
+            <button class="danger" type="button" id="emergencyBtn">紧急平仓</button>
             <button type="button" id="resetBtn">重置状态</button>
           </div>
           <p class="note">API 密钥仅提交到当前网站后端内存。实盘启动需要输入策略名称确认。</p>
@@ -170,10 +225,13 @@
           <div class="ladder-visual" id="ladderVisual"></div>
 
           <div class="lines">
+            <div><span>下一步动作</span><strong id="nextAction">-</strong></div>
+            <div><span>下一次加仓</span><strong id="nextAddPrice">-</strong></div>
             <div><span>加仓保本线</span><strong id="addBreakeven">-</strong></div>
             <div><span>首仓止盈线</span><strong id="coreTakeProfit">-</strong></div>
             <div><span>最大止损线</span><strong id="stopPrice">-</strong></div>
             <div><span>最近动作</span><strong id="lastAction">-</strong></div>
+            <div><span>风控状态</span><strong id="riskBreach">正常</strong></div>
           </div>
 
           <div class="manual">
@@ -187,6 +245,14 @@
 
       <section class="details-bar requires-bound">
         <button class="small-button" type="button" id="detailsToggle">查看策略详情</button>
+      </section>
+
+      <section class="panel audit-panel requires-bound">
+        <div class="section-title">
+          <h2>最近审计记录</h2>
+          <span>不记录 Secret</span>
+        </div>
+        <div class="audit-list" id="auditList"></div>
       </section>
 
       <section class="panel table-panel requires-bound collapsed" id="detailsPanel">

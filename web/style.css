@@ -10,6 +10,7 @@
   --green: #65d48b;
   --red: #f06f6f;
   --blue: #72a7ff;
+  --orange: #f2a766;
 }
 
 * {
@@ -52,6 +53,15 @@ body.bound .auth-gate {
   display: none;
 }
 
+body.app-locked .app-requires-login,
+body.app-locked .requires-bound {
+  display: none !important;
+}
+
+body:not(.app-locked) .login-gate {
+  display: none;
+}
+
 h1,
 h2,
 p {
@@ -87,7 +97,8 @@ label,
   border-color: var(--green);
 }
 
-.auth-gate {
+.auth-gate,
+.login-gate {
   min-height: calc(100vh - 140px);
   display: grid;
   place-items: center;
@@ -103,9 +114,31 @@ label,
   padding: 22px;
 }
 
+.safety-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: #151b22;
+}
+
+.safety-list div {
+  display: grid;
+  gap: 2px;
+}
+
+.safety-list strong {
+  font-size: 13px;
+}
+
+.safety-list span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1px;
   margin: 24px 0;
   border: 1px solid var(--line);
@@ -145,6 +178,11 @@ label,
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.section-title.compact {
+  margin-top: 4px;
+  margin-bottom: 0;
 }
 
 h2 {
@@ -249,7 +287,7 @@ select:focus {
 
 .actions {
   display: grid;
-  grid-template-columns: 1fr 88px 104px;
+  grid-template-columns: 1fr 76px 104px 104px;
   gap: 10px;
 }
 
@@ -270,6 +308,12 @@ button.primary {
   background: var(--gold);
   border-color: var(--gold);
   color: #171308;
+}
+
+button.danger {
+  background: #3a2023;
+  border-color: #743138;
+  color: #ffd6d6;
 }
 
 button.small-button {
@@ -344,6 +388,44 @@ button.small-button {
   font-weight: 700;
 }
 
+.danger-text {
+  color: var(--red);
+}
+
+.risk-check {
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: #151b22;
+}
+
+.audit-panel {
+  margin-top: 20px;
+}
+
+.audit-list {
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.audit-row,
+.audit-empty {
+  display: grid;
+  grid-template-columns: 1fr 180px 120px;
+  gap: 12px;
+  align-items: center;
+  background: var(--panel-2);
+  padding: 10px 12px;
+}
+
+.audit-row span,
+.audit-row small,
+.audit-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .table-panel {
   margin-top: 20px;
   overflow-x: auto;
@@ -402,7 +484,13 @@ td {
   }
 
   .grid2,
-  .lines {
+  .lines,
+  .audit-row,
+  .audit-empty {
     grid-template-columns: 1fr;
+  }
+
+  .actions {
+    grid-template-columns: 1fr 1fr;
   }
 }

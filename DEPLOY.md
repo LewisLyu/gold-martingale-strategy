@@ -6,6 +6,9 @@
 
 - 多客户会话隔离：每个浏览器 session 使用独立策略状态和独立 API 内存。
 - API Key/Secret/Passphrase 只保存在当前服务进程内存，不写入文件。
+- `APP_PASSWORD` 控制台登录保护。
+- 风控阈值：单日最大亏损、单轮最大浮亏、最大累计头寸、最大保证金压力。
+- 紧急平仓和审计记录。
 - Binance 已接入真实 USD-M Futures 行情、杠杆、市价单。
 - OKX、Bybit、Bitget、Gate.io、自定义交易所已有 UI 和绑定入口，但真实行情/下单适配器仍待接入。
 
@@ -13,7 +16,10 @@
 
 ```bash
 docker build -t gold-martingale .
-docker run --rm -p 8765:8765 gold-martingale
+docker run --rm -p 8765:8765 \
+  -e APP_PASSWORD="换成管理密码" \
+  -e APP_SECRET="换成随机字符串" \
+  gold-martingale
 ```
 
 打开：
@@ -28,7 +34,12 @@ http://127.0.0.1:8765
 
 ```bash
 docker build -t gold-martingale .
-docker run -d --name gold-martingale --restart unless-stopped -p 8765:8765 gold-martingale
+docker run -d --name gold-martingale --restart unless-stopped -p 8765:8765 \
+  -e APP_PASSWORD="换成管理密码" \
+  -e APP_SECRET="换成随机字符串" \
+  -e BINANCE_API_KEY="可选：个人使用时放这里" \
+  -e BINANCE_API_SECRET="可选：个人使用时放这里" \
+  gold-martingale
 ```
 
 再用 Nginx/Caddy/Cloudflare Tunnel 把公网域名反代到：
@@ -50,14 +61,20 @@ http://127.0.0.1:8765
 ```text
 PORT=8765
 HOST=0.0.0.0
+APP_PASSWORD=换成管理密码
+APP_SECRET=换成随机字符串
 ```
 
 注意：如果平台实例重启，内存里的 API 授权和策略状态会丢失，客户需要重新绑定。要做商业版，需要接数据库和加密密钥托管。
 
+如果公网环境没有设置 `APP_PASSWORD`，控制台会自动锁住，不允许进入交易界面。本地 `127.0.0.1` 调试可以不设置密码。
+
+不建议用免费实例跑实盘自动交易：实例可能休眠或重启。实盘建议使用固定公网 IP 的 VPS，并在交易所 API 后台设置 IP 白名单。
+
 ## 商业版上线前必须补的安全项
 
-- 用户登录系统，不能只靠浏览器 session。
-- API Key 加密存储或只使用短期内存授权。
-- 操作日志、风控限额、异常熔断。
+- 正式用户体系：注册、找回、设备管理、会话撤销。
+- API Key 加密存储或只使用短期内存授权；当前版本选择短期内存授权。
+- 更完整的通知系统：Telegram、邮件、短信。
 - 真实交易前的交易所适配器验收测试。
 - 每个交易所独立的最小下单量、数量精度、合约类型、保证金模式、持仓模式处理。
