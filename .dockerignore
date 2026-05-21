@@ -1,0 +1,7 @@
+.git
+.env
+__pycache__/
+*.pyc
+runtime_state/
+xau_bot_state.json
+.DS_Store

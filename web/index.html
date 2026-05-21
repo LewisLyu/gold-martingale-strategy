@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>黄金保守马丁格尔策略</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="locked">
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>黄金保守马丁格尔策略</h1>
+          <p>XAUUSDT · 首仓防守网格 · 保本减仓 · 1% 核心止盈重开</p>
+        </div>
+        <div class="top-actions requires-bound">
+          <button class="small-button" type="button" id="changeAuthBtn">更换授权</button>
+          <div class="status-pill" id="runState">未运行</div>
+        </div>
+      </section>
+
+      <section class="auth-gate" id="authGate">
+        <div class="auth-card">
+          <div class="section-title">
+            <h2>连接交易所账户</h2>
+            <span>本机内存授权</span>
+          </div>
+          <label>
+            交易所
+            <select id="exchangeSelect"></select>
+          </label>
+          <label>
+            API Key
+            <input id="apiKey" autocomplete="off" spellcheck="false" placeholder="输入 API Key" />
+          </label>
+          <label>
+            Secret Key
+            <input id="apiSecret" type="password" autocomplete="off" spellcheck="false" placeholder="输入 Secret Key" />
+          </label>
+          <label id="passphraseWrap" class="hidden">
+            Passphrase / API Password
+            <input id="passphrase" type="password" autocomplete="off" spellcheck="false" placeholder="部分交易所需要" />
+          </label>
+          <button class="primary" type="button" id="bindBtn">绑定账户</button>
+          <div class="exchange-note" id="exchangeNote"></div>
+          <p class="note">密钥只发送到本机 127.0.0.1 后端内存，不写入文件；绑定成功后会清空输入框并显示策略参数。</p>
+          <div class="error" id="authError"></div>
+        </div>
+      </section>
+
+      <section class="metrics requires-bound">
+        <div>
+          <span>最新价格</span>
+          <strong id="lastPrice">-</strong>
+        </div>
+        <div>
+          <span>累计头寸</span>
+          <strong id="invested">0.00U</strong>
+        </div>
+        <div>
+          <span>浮动盈亏</span>
+          <strong id="floatingPnl">0.00U</strong>
+        </div>
+        <div>
+          <span>保证金压力</span>
+          <strong id="pressure">0.00U</strong>
+        </div>
+      </section>
+
+      <section class="workspace requires-bound">
+        <form class="panel controls" id="configForm">
+          <div class="section-title">
+            <h2>运行参数</h2>
+            <span id="modeLabel">实盘准备</span>
+          </div>
+          <div class="bound-account">
+            <span>当前交易所</span>
+            <strong id="boundExchange">-</strong>
+            <small id="adapterStatus">-</small>
+          </div>
+
+          <div class="grid2">
+            <label>
+              交易对
+              <input name="symbol" value="XAUUSDT" />
+            </label>
+            <label>
+              本金 U
+              <input name="equity" type="number" step="0.01" value="500" />
+            </label>
+            <label>
+              首仓 U
+              <input name="initialNotional" type="number" step="0.01" value="45" />
+            </label>
+            <label>
+              杠杆
+              <input name="leverage" type="number" step="1" value="35" />
+            </label>
+            <label>
+              最大加仓
+              <input name="maxAdds" type="number" step="1" value="8" />
+            </label>
+            <label>
+              数量精度
+              <input name="stepSize" value="0.001" />
+            </label>
+            <label>
+              轮询秒数
+              <input name="interval" type="number" step="1" value="15" />
+            </label>
+            <label>
+              单轮最多下单
+              <input name="maxOrdersPerTick" type="number" step="1" value="1" />
+            </label>
+          </div>
+
+          <div class="grid2">
+            <label>
+              加仓跌幅
+              <input name="gridDrop" value="0.01" />
+            </label>
+            <label>
+              首仓止盈
+              <input name="coreTakeProfit" value="0.01" />
+            </label>
+            <label>
+              手续费估算
+              <input name="feeRate" value="0.0005" />
+            </label>
+            <label>
+              滑点估算
+              <input name="slippageRate" value="0.0002" />
+            </label>
+          </div>
+
+          <div class="switches">
+            <label class="check">
+              <input name="live" type="checkbox" checked />
+              实盘下单
+            </label>
+            <label class="check">
+              <input name="testnet" type="checkbox" />
+              使用测试网
+            </label>
+            <label class="check">
+              <input name="autoReopen" type="checkbox" />
+              止盈/止损后自动重开
+            </label>
+          </div>
+
+          <label>
+            实盘确认
+            <input name="confirmText" placeholder="输入：黄金保守马丁格尔策略" />
+          </label>
+
+          <div class="actions">
+            <button class="primary" type="button" id="startBtn">启动策略</button>
+            <button type="button" id="stopBtn">停止</button>
+            <button type="button" id="resetBtn">重置状态</button>
+          </div>
+          <p class="note">API 密钥仅提交到本机 127.0.0.1 后端内存。实盘启动需要输入策略名称确认。</p>
+        </form>
+
+        <section class="panel">
+          <div class="section-title">
+            <h2>策略状态</h2>
+            <span id="cycleLabel">cycle -</span>
+          </div>
+
+          <div class="ladder-visual" id="ladderVisual"></div>
+
+          <div class="lines">
+            <div><span>加仓保本线</span><strong id="addBreakeven">-</strong></div>
+            <div><span>首仓止盈线</span><strong id="coreTakeProfit">-</strong></div>
+            <div><span>最大止损线</span><strong id="stopPrice">-</strong></div>
+            <div><span>最近动作</span><strong id="lastAction">-</strong></div>
+          </div>
+
+          <div class="manual">
+            <input id="manualPrice" placeholder="手动价格 dry-run" />
+            <button type="button" id="tickBtn">模拟一跳</button>
+          </div>
+
+          <div class="error" id="errorBox"></div>
+        </section>
+      </section>
+
+      <section class="details-bar requires-bound">
+        <button class="small-button" type="button" id="detailsToggle">查看策略详情</button>
+      </section>
+
+      <section class="panel table-panel requires-bound collapsed" id="detailsPanel">
+        <div class="section-title">
+          <h2>头寸与浮亏明细</h2>
+          <span>按 U 本位计算</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>层级</th>
+              <th>跌幅</th>
+              <th>本次买入</th>
+              <th>累计头寸</th>
+              <th>当前价值</th>
+              <th>浮亏</th>
+            </tr>
+          </thead>
+          <tbody id="ladderRows"></tbody>
+        </table>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
