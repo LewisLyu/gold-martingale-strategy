@@ -45,7 +45,7 @@ SUPPORTED_EXCHANGES = {
         "status": "live",
         "needsPassphrase": True,
         "defaultSymbol": "XAU-USDT-SWAP",
-        "note": "已接入 OKX v5 SWAP/现货行情、杠杆和市价单；实盘前请先小金额测试。",
+        "note": "已接入 OKX v5 SWAP/现货行情、杠杆、市价单和限价托管单；实盘前请先小金额测试。",
     },
     "bybit": {
         "name": "Bybit",
@@ -100,6 +100,22 @@ class ExchangeClient(Protocol):
     ) -> None:
         ...
 
+    def limit_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: Decimal,
+        price: Decimal,
+        reduce_only: bool = False,
+    ) -> str:
+        ...
+
+    def cancel_order(self, symbol: str, order_id: str) -> None:
+        ...
+
+    def order_status(self, symbol: str, order_id: str) -> dict[str, Any]:
+        ...
+
 
 class UnsupportedExchangeClient:
     def __init__(self, exchange: str, live: bool) -> None:
@@ -125,6 +141,31 @@ class UnsupportedExchangeClient:
             self._raise()
         flag = " reduceOnly" if reduce_only else ""
         print(f"[DRY:{self.exchange}] MARKET {side} {symbol} qty={qty}{flag}")
+
+    def limit_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: Decimal,
+        price: Decimal,
+        reduce_only: bool = False,
+    ) -> str:
+        if self.live:
+            self._raise()
+        flag = " reduceOnly" if reduce_only else ""
+        order_id = f"dry-{self.exchange}-{time.time_ns()}"
+        print(f"[DRY:{self.exchange}] LIMIT {side} {symbol} qty={qty} price={price}{flag}")
+        return order_id
+
+    def cancel_order(self, symbol: str, order_id: str) -> None:
+        if self.live:
+            self._raise()
+        print(f"[DRY:{self.exchange}] CANCEL {symbol} order={order_id}")
+
+    def order_status(self, symbol: str, order_id: str) -> dict[str, Any]:
+        if self.live:
+            self._raise()
+        return {"state": "live", "instId": symbol, "ordId": order_id}
 
 
 def decimal_round_step(value: Decimal, step: Decimal) -> Decimal:
@@ -303,6 +344,65 @@ class OkxClient:
         if reduce_only:
             body["reduceOnly"] = "true"
         self.request("POST", "/api/v5/trade/order", body, signed=True)
+
+    def limit_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: Decimal,
+        price: Decimal,
+        reduce_only: bool = False,
+    ) -> str:
+        okx_side = "buy" if side.upper() == "BUY" else "sell"
+        size = self.order_size(symbol, qty)
+        px = format(price.normalize(), "f")
+        if not self.live:
+            flag = " reduceOnly" if reduce_only else ""
+            order_id = f"dry-okx-{time.time_ns()}"
+            print(f"[DRY:okx] LIMIT {okx_side} {symbol} sz={size} px={px}{flag}")
+            return order_id
+        body: dict[str, Any] = {
+            "instId": symbol,
+            "tdMode": "cash" if self.inst_type(symbol) == "SPOT" else self.margin_mode,
+            "side": okx_side,
+            "ordType": "limit",
+            "sz": size,
+            "px": px,
+        }
+        if self.pos_side:
+            body["posSide"] = self.pos_side
+        if reduce_only:
+            body["reduceOnly"] = "true"
+        result = self.request("POST", "/api/v5/trade/order", body, signed=True)
+        rows = result.get("data") or []
+        if not rows or not rows[0].get("ordId"):
+            raise RuntimeError(f"OKX order response missing ordId: {result}")
+        return str(rows[0]["ordId"])
+
+    def cancel_order(self, symbol: str, order_id: str) -> None:
+        if not self.live:
+            print(f"[DRY:okx] CANCEL {symbol} order={order_id}")
+            return
+        self.request(
+            "POST",
+            "/api/v5/trade/cancel-order",
+            {"instId": symbol, "ordId": order_id},
+            signed=True,
+        )
+
+    def order_status(self, symbol: str, order_id: str) -> dict[str, Any]:
+        if not self.live:
+            return {"state": "live", "instId": symbol, "ordId": order_id}
+        data = self.request(
+            "GET",
+            "/api/v5/trade/order",
+            {"instId": symbol, "ordId": order_id},
+            signed=True,
+        )
+        rows = data.get("data") or []
+        if rows:
+            return rows[0]
+        raise RuntimeError(f"OKX order not found: {order_id}")
 
 
 def create_exchange_client(

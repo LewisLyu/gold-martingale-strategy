@@ -51,6 +51,8 @@ class Config:
     slippage_rate: Decimal = Decimal("0.0002")
     max_orders_per_tick: int = 1
     auto_reopen: bool = False
+    execution_mode: str = "market"
+    preload_adds: int = 2
 
 
 @dataclass
@@ -66,6 +68,15 @@ class Lot:
 
 
 @dataclass
+class PendingOrder:
+    kind: str
+    level: int
+    order_id: str
+    qty: Decimal
+    price: Decimal
+
+
+@dataclass
 class CycleState:
     status: str = "idle"
     cycle_id: int = 0
@@ -73,6 +84,7 @@ class CycleState:
     core_qty: Decimal | None = None
     add_count: int = 0
     lots: list[Lot] = field(default_factory=list)
+    pending_orders: list[PendingOrder] = field(default_factory=list)
     last_action: str = ""
     realized_pnl: Decimal = Decimal("0")
 
@@ -85,7 +97,7 @@ class DecimalJSONEncoder(json.JSONEncoder):
     def default(self, obj: Any) -> Any:
         if isinstance(obj, Decimal):
             return str(obj)
-        if isinstance(obj, Lot):
+        if isinstance(obj, Lot | PendingOrder):
             return asdict(obj)
         return super().default(obj)
 
@@ -96,6 +108,16 @@ def lot_from_dict(data: dict[str, Any]) -> Lot:
         level=int(data["level"]),
         qty=d(data["qty"]),
         entry_price=d(data["entry_price"]),
+    )
+
+
+def pending_order_from_dict(data: dict[str, Any]) -> PendingOrder:
+    return PendingOrder(
+        kind=data["kind"],
+        level=int(data["level"]),
+        order_id=str(data["order_id"]),
+        qty=d(data["qty"]),
+        price=d(data["price"]),
     )
 
 
@@ -112,6 +134,9 @@ def load_state(path: Path) -> CycleState:
         core_qty=d(data["core_qty"]) if data.get("core_qty") is not None else None,
         add_count=int(data.get("add_count", 0)),
         lots=[lot_from_dict(item) for item in data.get("lots", [])],
+        pending_orders=[
+            pending_order_from_dict(item) for item in data.get("pending_orders", [])
+        ],
         last_action=data.get("last_action", ""),
         realized_pnl=d(data.get("realized_pnl", "0")),
     )
@@ -246,6 +271,10 @@ def add_qty_multiplier(add_level: int) -> Decimal:
     return Decimal(2) ** Decimal(add_level - 1)
 
 
+def price_to_order_text(price: Decimal) -> str:
+    return format(price.normalize(), "f")
+
+
 def add_breakeven_price(state: CycleState, cfg: Config) -> Decimal | None:
     add_lots = [lot for lot in state.lots if lot.kind == "add"]
     if not add_lots:
@@ -378,7 +407,228 @@ def close_all(
     return state.last_action
 
 
-def handle_tick(
+def place_limit_order(
+    client: Any,
+    state: CycleState,
+    cfg: Config,
+    kind: str,
+    level: int,
+    side: str,
+    qty: Decimal,
+    price: Decimal,
+    reduce_only: bool = False,
+) -> str:
+    limit_order = getattr(client, "limit_order", None)
+    if callable(limit_order):
+        order_id = limit_order(cfg.symbol, side, qty, price, reduce_only=reduce_only)
+    elif getattr(client, "live", False):
+        raise RuntimeError("当前交易所适配器还不支持限价托管单。")
+    else:
+        flag = " reduceOnly" if reduce_only else ""
+        order_id = f"dry-{kind}-{state.cycle_id}-{level}-{time.time_ns()}"
+        print(
+            f"[DRY] LIMIT {side} {cfg.symbol} qty={qty} price={price_to_order_text(price)}{flag}"
+        )
+    state.pending_orders.append(PendingOrder(kind, level, order_id, qty, price))
+    return order_id
+
+
+def cancel_pending_orders(
+    client: Any,
+    state: CycleState,
+    cfg: Config,
+    kinds: set[str] | None = None,
+) -> list[str]:
+    remaining: list[PendingOrder] = []
+    actions: list[str] = []
+    cancel_order = getattr(client, "cancel_order", None)
+    for order in state.pending_orders:
+        if kinds is not None and order.kind not in kinds:
+            remaining.append(order)
+            continue
+        if callable(cancel_order):
+            cancel_order(cfg.symbol, order.order_id)
+        elif getattr(client, "live", False):
+            raise RuntimeError("当前交易所适配器还不支持撤销托管单。")
+        actions.append(f"cancel {order.kind} order level={order.level}")
+    state.pending_orders = remaining
+    return actions
+
+
+def pending_filled(client: Any, cfg: Config, order: PendingOrder, price: Decimal) -> bool:
+    order_status = getattr(client, "order_status", None)
+    if callable(order_status) and getattr(client, "live", False):
+        status = order_status(cfg.symbol, order.order_id)
+        return str(status.get("state", "")).lower() == "filled"
+    if order.kind == "add":
+        return price <= order.price
+    return price >= order.price
+
+
+def ensure_add_orders(
+    client: Any,
+    state: CycleState,
+    cfg: Config,
+    step_size: Decimal,
+) -> list[str]:
+    if state.core_entry_price is None or state.core_qty is None:
+        return []
+    actions: list[str] = []
+    wanted_levels: list[int] = []
+    for level in range(state.add_count + 1, cfg.max_adds + 1):
+        if len(wanted_levels) >= max(1, cfg.preload_adds):
+            break
+        wanted_levels.append(level)
+    live_levels = {order.level for order in state.pending_orders if order.kind == "add"}
+    for level in wanted_levels:
+        if level in live_levels:
+            continue
+        qty = round_step(state.core_qty * add_qty_multiplier(level), step_size)
+        if qty <= 0:
+            raise RuntimeError("Add quantity rounded to zero")
+        price = state.core_entry_price * (Decimal("1") - cfg.grid_drop) ** Decimal(level)
+        order_id = place_limit_order(client, state, cfg, "add", level, "BUY", qty, price)
+        actions.append(f"placed add limit level={level} qty={qty} price={qfmt(price, '0.0001')} id={order_id}")
+    return actions
+
+
+def ensure_trim_order(
+    client: Any,
+    state: CycleState,
+    cfg: Config,
+    step_size: Decimal,
+) -> list[str]:
+    add_lots = [lot for lot in state.lots if lot.kind == "add"]
+    if not add_lots:
+        return []
+    if any(order.kind == "trim" for order in state.pending_orders):
+        return []
+    be = add_breakeven_price(state, cfg)
+    if be is None:
+        return []
+    qty = round_step(sum((lot.qty for lot in add_lots), Decimal("0")), step_size)
+    if qty <= 0:
+        return []
+    order_id = place_limit_order(client, state, cfg, "trim", state.add_count, "SELL", qty, be, reduce_only=True)
+    return [f"placed trim reduce-only qty={qty} price={qfmt(be, '0.0001')} id={order_id}"]
+
+
+def ensure_core_tp_order(
+    client: Any,
+    state: CycleState,
+    cfg: Config,
+    step_size: Decimal,
+) -> list[str]:
+    if any(lot.kind == "add" for lot in state.lots):
+        return []
+    if any(order.kind == "core_tp" for order in state.pending_orders):
+        return []
+    tp = core_take_profit_price(state, cfg)
+    if tp is None or state.core_qty is None:
+        return []
+    qty = round_step(state.core_qty, step_size)
+    if qty <= 0:
+        return []
+    order_id = place_limit_order(client, state, cfg, "core_tp", 0, "SELL", qty, tp, reduce_only=True)
+    return [f"placed core tp reduce-only qty={qty} price={qfmt(tp, '0.0001')} id={order_id}"]
+
+
+def apply_filled_order(
+    client: Any,
+    state: CycleState,
+    cfg: Config,
+    order: PendingOrder,
+    step_size: Decimal,
+) -> list[str]:
+    actions: list[str] = []
+    if order.kind == "add":
+        state.add_count = max(state.add_count, order.level)
+        state.lots.append(Lot("add", order.level, order.qty, order.price))
+        actions.append(f"filled add level={order.level} qty={order.qty} price={qfmt(order.price, '0.0001')}")
+        actions.extend(cancel_pending_orders(client, state, cfg, {"trim", "core_tp"}))
+        actions.extend(ensure_trim_order(client, state, cfg, step_size))
+        actions.extend(ensure_add_orders(client, state, cfg, step_size))
+        return actions
+    if order.kind == "trim":
+        add_lots = [lot for lot in state.lots if lot.kind == "add"]
+        cost = sum((lot.cost for lot in add_lots), Decimal("0"))
+        qty = sum((lot.qty for lot in add_lots), Decimal("0"))
+        pnl = qty * order.price - cost
+        state.realized_pnl += pnl
+        state.lots = [lot for lot in state.lots if lot.kind != "add"]
+        state.add_count = 0
+        actions.append(f"filled trim qty={qfmt(qty, '0.000001')} price={qfmt(order.price, '0.0001')} pnl={qfmt(pnl)}")
+        actions.extend(cancel_pending_orders(client, state, cfg, {"add"}))
+        actions.extend(ensure_core_tp_order(client, state, cfg, step_size))
+        return actions
+    if order.kind == "core_tp":
+        pnl = order.qty * order.price - invested_cost(state)
+        state.realized_pnl += pnl
+        state.status = "idle"
+        state.core_entry_price = None
+        state.core_qty = None
+        state.add_count = 0
+        state.lots = []
+        actions.append(f"filled core tp qty={order.qty} price={qfmt(order.price, '0.0001')} pnl={qfmt(pnl)}")
+        actions.extend(cancel_pending_orders(client, state, cfg))
+        return actions
+    return actions
+
+
+def handle_limit_tick(
+    client: Any,
+    state: CycleState,
+    cfg: Config,
+    price: Decimal,
+    step_size: Decimal,
+) -> list[str]:
+    actions: list[str] = []
+    if state.status == "idle":
+        actions.append(open_core(client, state, cfg, price, step_size))
+        actions.extend(ensure_add_orders(client, state, cfg, step_size))
+        actions.extend(ensure_core_tp_order(client, state, cfg, step_size))
+        return actions
+
+    for order in list(state.pending_orders):
+        if not pending_filled(client, cfg, order, price):
+            continue
+        state.pending_orders = [
+            item for item in state.pending_orders if item.order_id != order.order_id
+        ]
+        actions.extend(apply_filled_order(client, state, cfg, order, step_size))
+
+    if state.status == "idle":
+        if cfg.auto_reopen:
+            actions.append(open_core(client, state, cfg, price, step_size))
+            actions.extend(ensure_add_orders(client, state, cfg, step_size))
+            actions.extend(ensure_core_tp_order(client, state, cfg, step_size))
+        return actions
+
+    sp = stop_price(state, cfg)
+    if state.add_count >= cfg.max_adds and sp is not None and price <= sp:
+        actions.extend(cancel_pending_orders(client, state, cfg))
+        actions.append(close_all(client, state, cfg, price, step_size, "max-add-stop"))
+        if cfg.auto_reopen:
+            actions.append(open_core(client, state, cfg, price, step_size))
+            actions.extend(ensure_add_orders(client, state, cfg, step_size))
+            actions.extend(ensure_core_tp_order(client, state, cfg, step_size))
+        return actions
+
+    actions.extend(ensure_trim_order(client, state, cfg, step_size))
+    if any(lot.kind == "add" for lot in state.lots):
+        actions.extend(ensure_add_orders(client, state, cfg, step_size))
+    else:
+        actions.extend(ensure_core_tp_order(client, state, cfg, step_size))
+        actions.extend(ensure_add_orders(client, state, cfg, step_size))
+    if not actions:
+        state.last_action = "hold"
+        actions.append("hold")
+    else:
+        state.last_action = " / ".join(actions[-3:])
+    return actions
+
+
+def handle_market_tick(
     client: BinanceFuturesClient,
     state: CycleState,
     cfg: Config,
@@ -421,6 +671,18 @@ def handle_tick(
         state.last_action = "hold"
         actions.append("hold")
     return actions
+
+
+def handle_tick(
+    client: BinanceFuturesClient,
+    state: CycleState,
+    cfg: Config,
+    price: Decimal,
+    step_size: Decimal,
+) -> list[str]:
+    if cfg.execution_mode == "limit":
+        return handle_limit_tick(client, state, cfg, price, step_size)
+    return handle_market_tick(client, state, cfg, price, step_size)
 
 
 def print_status(state: CycleState, cfg: Config, price: Decimal) -> None:
@@ -490,6 +752,8 @@ def build_config(args: argparse.Namespace) -> Config:
         slippage_rate=d(args.slippage_rate),
         max_orders_per_tick=args.max_orders_per_tick,
         auto_reopen=args.auto_reopen,
+        execution_mode=args.execution_mode,
+        preload_adds=args.preload_adds,
     )
 
 
@@ -513,6 +777,16 @@ def parse_args() -> argparse.Namespace:
             default=int(os.getenv("MAX_ORDERS_PER_TICK", "1")),
         )
         p.add_argument("--auto-reopen", action="store_true")
+        p.add_argument(
+            "--execution-mode",
+            choices=["market", "limit"],
+            default=os.getenv("EXECUTION_MODE", "market"),
+        )
+        p.add_argument(
+            "--preload-adds",
+            type=int,
+            default=int(os.getenv("PRELOAD_ADDS", "2")),
+        )
 
     table = sub.add_parser("table", help="print the USDT ladder")
     common(table)

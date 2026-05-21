@@ -187,6 +187,8 @@ class StrategyRunner:
                 slippage_rate=d(payload.get("slippageRate", "0.0002")),
                 max_orders_per_tick=int(payload.get("maxOrdersPerTick", 1)),
                 auto_reopen=bool(payload.get("autoReopen", False)),
+                execution_mode=str(payload.get("executionMode", "market")),
+                preload_adds=int(payload.get("preloadAdds", 2)),
             )
             self.step_size = d(payload.get("stepSize", "0.001"))
             self.interval = int(payload.get("interval", 15))
@@ -411,6 +413,17 @@ class StrategyRunner:
     def next_action_label(self, state: CycleState) -> str:
         if state.status == "idle":
             return "等待开首仓"
+        if self.cfg.execution_mode == "limit":
+            add_orders = [order for order in state.pending_orders if order.kind == "add"]
+            trim_orders = [order for order in state.pending_orders if order.kind == "trim"]
+            tp_orders = [order for order in state.pending_orders if order.kind == "core_tp"]
+            if trim_orders:
+                return f"等待保本减仓单 {qfmt(trim_orders[0].price, '0.0001')} 成交"
+            if tp_orders:
+                return f"等待首仓止盈单 {qfmt(tp_orders[0].price, '0.0001')} 成交"
+            if add_orders:
+                ordered = sorted(add_orders, key=lambda item: item.level)
+                return f"已挂加仓{ordered[0].level}：{qfmt(ordered[0].price, '0.0001')}"
         if state.add_count >= self.cfg.max_adds:
             sp = stop_price(state, self.cfg)
             return f"跌破 {qfmt(sp, '0.0001')} 将止损" if sp else "等待止损条件"
@@ -489,6 +502,16 @@ class StrategyRunner:
                 "config": asdict(self.cfg),
                 "risk": asdict(self.risk),
                 "state": asdict(state),
+                "pendingOrders": [
+                    {
+                        "kind": order.kind,
+                        "level": order.level,
+                        "orderId": order.order_id,
+                        "qty": qfmt(order.qty, "0.000001"),
+                        "price": qfmt(order.price, "0.0001"),
+                    }
+                    for order in state.pending_orders
+                ],
                 "phase": phase,
                 "nextAction": self.next_action_label(state),
                 "riskBreach": breach,
@@ -523,7 +546,9 @@ class StrategyRunner:
                 "cycle_id": status["state"]["cycle_id"],
                 "add_count": status["state"]["add_count"],
                 "last_action": status["state"]["last_action"],
+                "pending_orders": status["state"].get("pending_orders", []),
             },
+            "pendingOrders": status.get("pendingOrders", []),
             "phase": status["phase"],
             "nextAction": status["nextAction"],
             "riskBreach": status["riskBreach"],

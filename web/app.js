@@ -84,7 +84,7 @@ function renderStatus(data) {
   const running = data.running;
   if (Array.isArray(data.exchanges) && data.exchanges.length) {
     exchanges = data.exchanges;
-    if (!selectedExchange) selectedExchange = data.exchange || exchanges[0].id;
+    selectedExchange = data.exchange || selectedExchange || exchanges[0].id;
     renderExchangeSelect();
   }
   $("#runState").textContent = running ? "运行中" : "未运行";
@@ -105,6 +105,10 @@ function renderStatus(data) {
   setText("#addBreakeven", data.addBreakeven);
   setText("#coreTakeProfit", data.coreTakeProfit);
   setText("#stopPrice", data.stopPrice);
+  const pendingOrders = data.pendingOrders || [];
+  $("#pendingOrders").textContent = pendingOrders.length
+    ? pendingOrders.map((order) => `${order.kind}${order.level}: ${order.price}`).join(" / ")
+    : "-";
   $("#riskBreach").textContent = data.riskBreach || "正常";
   $("#riskBreach").classList.toggle("danger-text", Boolean(data.riskBreach));
   $("#cycleLabel").textContent = `cycle ${data.state.cycle_id || 0}`;

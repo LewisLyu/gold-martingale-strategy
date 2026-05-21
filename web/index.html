@@ -147,6 +147,17 @@
               单轮最多下单
               <input name="maxOrdersPerTick" type="number" step="1" value="1" />
             </label>
+            <label>
+              执行模式
+              <select name="executionMode">
+                <option value="market">到价市价</option>
+                <option value="limit">限价托管</option>
+              </select>
+            </label>
+            <label>
+              预挂加仓档数
+              <input name="preloadAdds" type="number" min="1" max="8" step="1" value="2" />
+            </label>
           </div>
 
           <div class="grid2">
@@ -238,6 +249,7 @@
             <div><span>加仓保本线</span><strong id="addBreakeven">-</strong></div>
             <div><span>首仓止盈线</span><strong id="coreTakeProfit">-</strong></div>
             <div><span>最大止损线</span><strong id="stopPrice">-</strong></div>
+            <div><span>托管挂单</span><strong id="pendingOrders">-</strong></div>
             <div><span>最近动作</span><strong id="lastAction">-</strong></div>
             <div><span>风控状态</span><strong id="riskBreach">正常</strong></div>
           </div>
